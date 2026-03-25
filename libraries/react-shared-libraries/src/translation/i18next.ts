@@ -22,7 +22,6 @@ i18next
     detection: {
       order: ['cookie'],
       lookupCookie: cookieName,
-      caches: ['cookie'],
     },
     preload: runsOnServerSide ? languages : [],
   });
