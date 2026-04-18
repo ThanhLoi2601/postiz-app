@@ -3,6 +3,15 @@
  *
  * URL: /provider/:p  (e.g. /provider/tiktok, /provider/instagram)
  *
+ * --- Auth (native -> WebView, via URL) ---
+ * Append `?loggedAuth=<jwt>` to the URL. The shared fetch wrapper
+ * (libraries/helpers/src/utils/custom.fetch.func.ts) reads that search
+ * param on every request and attaches it as the `auth` header, so any
+ * authenticated API call made by the SettingsComponent or checkValidity
+ * just works. The (provider) route is also excluded from the 401->/
+ * redirect logic in LayoutContext, so a stale token won't yank the
+ * WebView away from the form.
+ *
  * --- Initial state (native -> WebView, push once) ---
  * Before loading the URL, the native side injects a global:
  *
@@ -46,7 +55,7 @@
  * If a different channel is needed, adjust ./bridge.tsx — this page is only
  * a server wrapper that forwards the `:p` route param.
  */
-import { ProviderPreviewBridge } from './bridge';
+import { InBridge } from '@gitroom/frontend/app/(provider)/provider/[p]/in-bridge';
 
 export default async function Page({
   params,
@@ -54,5 +63,5 @@ export default async function Page({
   params: Promise<{ p: string }>;
 }) {
   const { p } = await params;
-  return <ProviderPreviewBridge provider={p} />;
+  return <InBridge provider={p} />;
 }
