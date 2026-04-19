@@ -97,6 +97,12 @@ export interface ISocialMediaIntegration {
     postDetails: PostDetails[],
     integration: Integration
   ): Promise<PostResponse[]>; // Schedules a new post
+
+  getComments?(
+    postId: string,
+    accessToken: string,
+    pageId?: string
+  ): Promise<SocialComment[]>; // Get comments from a post
 }
 
 export type PostResponse = {
@@ -125,6 +131,18 @@ export type MediaContent = {
   alt?: string;
   thumbnail?: string;
   thumbnailTimestamp?: number;
+};
+
+export type SocialComment = {
+  id: string;
+  content: string;
+  author: {
+    id: string;
+    name: string;
+    picture?: string;
+  };
+  createdAt: string;
+  permalinkUrl?: string;
 };
 
 export type FetchPageInformationResult = {

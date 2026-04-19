@@ -3,6 +3,7 @@ import {
   AuthTokenDetails,
   PostDetails,
   PostResponse,
+  SocialComment,
   SocialProvider,
 } from '@gitroom/nestjs-libraries/integrations/social/social.integrations.interface';
 import { makeId } from '@gitroom/nestjs-libraries/services/make.is';
@@ -652,6 +653,65 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
       return result;
     } catch (err) {
       console.error('Error fetching Facebook post analytics:', err);
+      return [];
+    }
+  }
+
+async getComments(postId: string, accessToken: string, pageId?: string): Promise<SocialComment[]> {
+    try {
+      console.log('[FacebookProvider] Fetching comments - Post ID:', postId, 'Page ID:', pageId);
+      
+      // For Facebook Page posts, try both formats:
+      // 1. Use PAGE_ID_POST_ID format for page posts
+      // 2. Fallback to just POST_ID
+      
+      let endpointId = postId;
+      if (pageId && /^\d+$/.test(pageId)) {
+        // Try with PAGE_ID_POST_ID format first
+        endpointId = `${pageId}_${postId}`;
+      }
+      
+      // Try with formatted ID first (for Page posts)
+      console.log('[FacebookProvider] Trying endpoint ID:', endpointId);
+      
+      const response = await this.fetch(
+        `https://graph.facebook.com/v20.0/${endpointId}/comments?fields=id,message,from,created_time,permalink_url&summary=1&order=reverse_chronological&limit=100&access_token=${accessToken}`,
+        {},
+        'get facebook comments'
+      );
+
+      let data = await response.json();
+      
+      // If error with formatted ID, try with just postId
+      if (data?.error && pageId && /^\d+$/.test(pageId)) {
+        console.log('[FacebookProvider] Trying with plain post ID...');
+        const response2 = await this.fetch(
+          `https://graph.facebook.com/v20.0/${postId}/comments?fields=id,message,from,created_time,permalink_url&summary=1&order=reverse_chronological&limit=100&access_token=${accessToken}`,
+          {},
+          'get facebook comments'
+        );
+        data = await response2.json();
+      }
+      
+      console.log('[FacebookProvider] Response:', JSON.stringify(data));
+      
+      if (!data?.data) {
+        return [];
+      }
+
+      return data.data.map((comment: any) => ({
+        id: comment.id,
+        content: comment.message || '',
+        author: {
+          id: comment.from?.id || '',
+          name: comment.from?.name || 'Unknown',
+          picture: comment.from?.picture?.data?.url || undefined,
+        },
+        createdAt: comment.created_time,
+        permalinkUrl: comment.permalink_url || undefined,
+      }));
+    } catch (err) {
+      console.error('[FacebookProvider] Error fetching Facebook comments:', err);
       return [];
     }
   }

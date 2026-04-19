@@ -4,7 +4,7 @@ import { Metadata } from 'next';
 import { isGeneralServerSide } from '@gitroom/helpers/utils/is.general.server.side';
 import SafeImage from '@gitroom/react/helpers/safe.image';
 import Link from 'next/link';
-import { CommentsComponents } from '@gitroom/frontend/components/preview/comments.components';
+import { CommentsTabs } from '@gitroom/frontend/components/preview/comments.tabs';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import { VideoOrImage } from '@gitroom/react/helpers/video.or.image';
@@ -172,7 +172,7 @@ export default async function Auth(
         </div>
         <div className="w-full lg:w-96 lg:flex-shrink-0">
           <div className="p-4 pt-0">
-            <CommentsComponents postId={id} />
+            <CommentsTabs postId={id} />
           </div>
         </div>
       </div>

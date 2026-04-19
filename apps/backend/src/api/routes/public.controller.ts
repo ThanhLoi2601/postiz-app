@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PostsService } from '@gitroom/nestjs-libraries/database/prisma/posts/posts.service';
+import { IntegrationService } from '@gitroom/nestjs-libraries/database/prisma/integrations/integration.service';
+import { IntegrationManager } from '@gitroom/nestjs-libraries/integrations/integration.manager';
 import { TrackService } from '@gitroom/nestjs-libraries/track/track.service';
 import { RealIP } from 'nestjs-real-ip';
 import { UserAgent } from '@gitroom/nestjs-libraries/user/user.agent';
@@ -38,7 +40,9 @@ export class PublicController {
     private _agentGraphInsertService: AgentGraphInsertService,
     private _postsService: PostsService,
     private _nowpayments: Nowpayments,
-    private _subscriptionService: SubscriptionService
+    private _subscriptionService: SubscriptionService,
+    private _integrationService: IntegrationService,
+    private _integrationManager: IntegrationManager
   ) {}
   @Post('/agent')
   async createAgent(@Body() body: { text: string; apiKey: string }) {
@@ -54,7 +58,8 @@ export class PublicController {
 
   @Get(`/posts/:id`)
   async getPreview(@Param('id') id: string) {
-    return (await this._postsService.getPostsRecursively(id, true)).map(
+    const posts = await this._postsService.getPostsRecursively(id, true);
+    return posts.map(
       ({ childrenPost, ...p }) => ({
         ...p,
         ...(p.integration
@@ -75,6 +80,116 @@ export class PublicController {
   @Get(`/posts/:id/comments`)
   async getComments(@Param('id') postId: string) {
     return { comments: await this._postsService.getComments(postId) };
+  }
+
+  @Get(`/posts/:id/facebook-comments`)
+  async getFacebookComments(
+    @Param('id') id: string,
+    @Query('accessToken') accessToken: string
+  ) {
+    try {
+      const posts = await this._postsService.getPostsRecursively(id, true);
+      if (!posts || posts.length === 0) {
+        return { success: false, comments: [], error: 'Post not found' };
+      }
+
+      const post = posts[0];
+      if (!post.releaseURL || !post.releaseURL.includes('facebook.com')) {
+        return { success: false, comments: [], error: 'Not a Facebook post' };
+      }
+
+      const releaseUrl = post.releaseURL;
+      console.log('[PublicController] Facebook post URL:', releaseUrl);
+
+      // Extract Facebook Page ID and Post ID - handle multiple URL formats
+      let pageId: string | null = null;
+      let postId: string | null = null;
+      
+      // Pattern 1: /PAGE_ID/posts/POST_ID (numeric page ID)
+      const match1 = releaseUrl.match(/facebook\.com\/(\d+)\/posts\/(\d+)/);
+      if (match1) {
+        pageId = match1[1];
+        postId = match1[2];
+      }
+      
+      // Pattern 2: /username/posts/POST_ID (username format)
+      if (!pageId || !postId) {
+        const match2 = releaseUrl.match(/facebook\.com\/([^/]+)\/posts\/(\d+)/);
+        if (match2) {
+          // Only use if second part is numeric (post ID)
+          if (/^\d+$/.test(match2[2])) {
+            pageId = match2[1]; // This might be username, not page ID
+            postId = match2[2];
+          }
+        }
+      }
+      
+      // Pattern 3: /groups/GROUP_ID/posts/POST_ID
+      if (!pageId || !postId) {
+        const match3 = releaseUrl.match(/facebook\.com\/groups\/[^/]+\/posts\/(\d+)/);
+        if (match3) postId = match3[1];
+      }
+      
+      // Pattern 4: ?story_fbid=POST_ID
+      if (!postId) {
+        const match4 = releaseUrl.match(/story_fbid=(\d+)/);
+        if (match4) postId = match4[1];
+      }
+      
+      // Pattern 5: ?fbid=POST_ID (photo, video, etc)
+      if (!postId) {
+        const match5 = releaseUrl.match(/[?&]fbid=(\d+)/);
+        if (match5) postId = match5[1];
+      }
+
+      console.log('[PublicController] Extracted - Page ID:', pageId, 'Post ID:', postId);
+
+      if (!postId) {
+        return { success: false, comments: [], error: 'Could not extract Facebook post ID' };
+      }
+
+      // For Facebook Page posts, we need to use PAGE_ID_POST_ID format
+      // But we need to check if pageId is available and valid
+      const fbProvider = this._integrationManager.getSocialIntegration('facebook');
+      const comments = await fbProvider.getComments(postId, accessToken, pageId || undefined);
+
+      return { success: true, comments };
+    } catch (err) {
+      console.error('[PublicController] Error fetching Facebook comments:', err);
+      return { success: false, comments: [], error: String(err) };
+    }
+  }
+
+  @Get('/posts/:id/integration-token')
+  async getIntegrationToken(
+    @Param('id') id: string,
+    @Query('provider') provider: string
+  ) {
+    try {
+      const posts = await this._postsService.getPostsRecursively(id, true);
+      if (!posts || posts.length === 0) {
+        return { success: false, token: null };
+      }
+
+      const post = posts[0];
+      if (!post.integrationId || !post.organizationId) {
+        return { success: false, token: null };
+      }
+
+      const integration = await this._integrationService.getIntegrationById(
+        post.organizationId,
+        post.integrationId
+      );
+
+      if (!integration || integration.providerIdentifier !== provider) {
+        return { success: false, token: null };
+      }
+
+      return { success: true, token: integration.token };
+    } catch (err) {
+      console.error('[PublicController] Error getting integration token:', err);
+      return { success: false, token: null };
+    }
   }
 
   @Post('/t')
