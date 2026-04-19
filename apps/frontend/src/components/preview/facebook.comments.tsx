@@ -2,14 +2,27 @@
 
 import { useUser } from '@gitroom/frontend/components/layout/user.context';
 import { Button } from '@gitroom/react/form/button';
-import { FC, useCallback, useState } from 'react';
+import { FC, useCallback, useState, useRef } from 'react';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import useSWR from 'swr';
+import { FieldValues, SubmitHandler, useForm } from 'react-hook-form';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 
 dayjs.extend(relativeTime);
+
+interface ReplyData {
+  id: string;
+  content: string;
+  author: {
+    id: string;
+    name: string;
+    picture?: string;
+  };
+  createdAt: string;
+  permalinkUrl?: string;
+}
 
 const formatTime = (date: string) => {
   const d = dayjs(date);
@@ -29,19 +42,9 @@ const formatTime = (date: string) => {
 
 const Avatar = ({ src, name }: { src?: string; name: string }) => {
   if (src) {
-    return (
-      <img
-        src={src}
-        alt={name}
-        className="w-10 h-10 rounded-full object-cover"
-      />
-    );
+    return <img src={src} alt={name} className="w-10 h-10 rounded-full object-cover" />;
   }
-  
-  const getInitials = (n: string) => {
-    return n.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2);
-  };
-
+  const getInitials = (n: string) => n.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2);
   return (
     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-semibold text-sm">
       {getInitials(name)}
@@ -61,7 +64,32 @@ export const FacebookCommentsTab: FC<{
 }> = ({ postId, accessToken }) => {
   const fetch = useFetch();
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
+  const [repliesData, setRepliesData] = useState<Record<string, ReplyData[]>>({});
+  const [loadingReplies, setLoadingReplies] = useState<Record<string, boolean>>({});
+  const { register, handleSubmit, reset, setValue } = useForm();
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const mainTextareaRef = useRef<HTMLTextAreaElement>(null);
   const t = useT();
+
+  const user = useUser();
+
+  const goToComments = useCallback(() => {
+    window.location.href = `/auth?returnUrl=${window.location.href}`;
+  }, []);
+  if (!user?.id) {
+    return (
+      <Button onClick={goToComments}>
+        {t(
+          'login_register_to_add_comments',
+          'Login / Register to add comments'
+        )}
+      </Button>
+    );
+  }
 
   const fetcher = useCallback(async () => {
     if (!accessToken) {
@@ -78,11 +106,111 @@ export const FacebookCommentsTab: FC<{
 
   const handleReply = useCallback((id: string, name: string) => {
     setReplyTo({ id, name });
+    setSubmitError(null);
+    setSubmitSuccess(false);
+    setTimeout(() => replyTextareaRef.current?.focus(), 100);
   }, []);
 
   const cancelReply = useCallback(() => {
     setReplyTo(null);
-  }, []);
+    reset();
+    setSubmitError(null);
+    setSubmitSuccess(false);
+  }, [reset]);
+
+  const loadReplies = useCallback(async (commentId: string) => {
+    if (!accessToken) return;
+    
+    setLoadingReplies(prev => ({ ...prev, [commentId]: true }));
+    
+    try {
+      const res = await fetch(`/public/posts/${postId}/facebook-replies?commentId=${commentId}&accessToken=${encodeURIComponent(accessToken)}`);
+      const data = await res.json();
+      
+      if (data.success && data.replies) {
+        setRepliesData(prev => ({ ...prev, [commentId]: data.replies }));
+        setExpandedReplies(prev => ({ ...prev, [commentId]: true }));
+      }
+    } catch (err) {
+      console.error('Error loading replies:', err);
+    } finally {
+      setLoadingReplies(prev => ({ ...prev, [commentId]: false }));
+    }
+  }, [accessToken, fetch, postId]);
+
+  const toggleReplies = useCallback((commentId: string) => {
+    if (expandedReplies[commentId]) {
+      setExpandedReplies(prev => ({ ...prev, [commentId]: false }));
+    } else {
+      if (!repliesData[commentId]) {
+        loadReplies(commentId);
+      } else {
+        setExpandedReplies(prev => ({ ...prev, [commentId]: true }));
+      }
+    }
+  }, [expandedReplies, repliesData, loadReplies]);
+
+  const onReplySubmit: SubmitHandler<FieldValues> = useCallback(async (e) => {
+    if (!accessToken || !replyTo) return;
+    
+    setIsSubmitting(true);
+    setSubmitError(null);
+    setSubmitSuccess(false);
+    
+    try {
+      const res = await fetch(`/public/posts/${postId}/facebook-reply`, {
+        method: 'POST',
+        body: JSON.stringify({
+          message: e.replyMessage,
+          replyToCommentId: replyTo.id
+        })
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setSubmitSuccess(true);
+        setReplyTo(null);
+        reset();
+        mutate();
+        setTimeout(() => setSubmitSuccess(false), 3000);
+      } else {
+        setSubmitError(data.error || 'Failed to reply');
+      }
+    } catch (err) {
+      setSubmitError('Error posting reply');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [accessToken, replyTo, postId, fetch, reset, mutate]);
+
+  const onNewCommentSubmit: SubmitHandler<FieldValues> = useCallback(async (e) => {
+    if (!accessToken) return;
+    
+    setIsSubmitting(true);
+    setSubmitError(null);
+    setSubmitSuccess(false);
+    
+    try {
+      const res = await fetch(`/public/posts/${postId}/facebook-comment`, {
+        method: 'POST',
+        body: JSON.stringify({ message: e.newComment })
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setSubmitSuccess(true);
+        reset();
+        mutate();
+        setTimeout(() => setSubmitSuccess(false), 3000);
+      } else {
+        setSubmitError(data.error || 'Failed to post comment');
+      }
+    } catch (err) {
+      setSubmitError('Error posting comment');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [accessToken, postId, fetch, reset, mutate]);
 
   const openInFacebook = useCallback((url: string) => {
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -141,7 +269,7 @@ export const FacebookCommentsTab: FC<{
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-white">{comment.author?.name || 'Unknown'}</span>
                     <span className="text-xs text-gray-500">{formatTime(comment.createdAt)}</span>
-                  </div>
+</div>
                   <p className="text-sm text-gray-300 mt-1 break-words">{comment.content}</p>
                   <div className="flex items-center gap-3 mt-2">
                     <button onClick={() => handleReply(comment.id, comment.author?.name || 'User')} className="flex items-center gap-1 text-xs text-gray-500 hover:text-white transition-colors">
@@ -157,26 +285,79 @@ export const FacebookCommentsTab: FC<{
                       </button>
                     )}
                   </div>
+                  
+                  {comment.repliesCount > 0 && (
+                    <div className="mt-3">
+                      <button 
+                        onClick={() => toggleReplies(comment.id)}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        {loadingReplies[comment.id] ? 'Loading...' : expandedReplies[comment.id] ? 'Hide replies' : `View replies (${comment.repliesCount})`}
+                      </button>
+                      
+                      {expandedReplies[comment.id] && repliesData[comment.id] && (
+                        <div className="mt-3 space-y-3 pl-4 border-l-2 border-gray-700">
+                          {repliesData[comment.id].map((reply: ReplyData) => (
+                            <div key={reply.id} className="flex gap-3">
+                              <Avatar src={reply.author?.picture} name={reply.author?.name || 'User'} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-semibold text-white">{reply.author?.name || 'Unknown'}</span>
+                                  <span className="text-xs text-gray-500">{formatTime(reply.createdAt)}</span>
+                                </div>
+                                <p className="text-sm text-gray-300 mt-1 break-words">{reply.content}</p>
+                                <button onClick={() => handleReply(reply.id, reply.author?.name || 'User')} className="flex items-center gap-1 mt-2 text-xs text-gray-500 hover:text-white transition-colors">
+                                  {t('reply', 'Reply')}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
-
       {replyTo && (
         <div className="flex items-center justify-between bg-third px-3 py-2 rounded-md border border-tableBorder mt-4">
           <div className="flex items-center gap-2 text-sm">
             <span className="text-gray-400">Replying to</span>
             <span className="text-white font-medium">@{replyTo.name}</span>
+        <form onSubmit={handleSubmit(onReplySubmit)} className="space-y-3 pt-4 border-t border-tableBorder">
+          <div className="flex items-center justify-between bg-third px-3 py-2 rounded-md border border-tableBorder">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-gray-400">Replying to</span>
+              <span className="text-white font-medium">@{replyTo.name}</span>
+            </div>
+            <button type="button" onClick={cancelReply} className="text-gray-500 hover:text-white transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
           <button onClick={cancelReply} className="text-gray-500 hover:text-white transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+          <textarea
+            ref={replyTextareaRef}
+            {...register('replyMessage', { required: true })}
+            className="flex w-full px-3 py-2 text-sm text-white bg-third border border-tableBorder placeholder-gray-500 rounded-md min-h-[80px] resize-none focus:ring-0 outline-none"
+            placeholder={t('write_reply', 'Write a reply...')}
+          />
+          <div className="flex justify-between items-center">
+            {submitError && <span className="text-red-400 text-sm">{submitError}</span>}
+            {submitSuccess && <span className="text-green-400 text-sm">Reply posted!</span>}
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? t('posting', 'Posting...') : t('post_reply', 'Reply')}
+            </Button>
+          </div>
+        </form>
       )}
+
     </div>
   );
 };

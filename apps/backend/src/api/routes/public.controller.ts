@@ -160,6 +160,85 @@ export class PublicController {
     }
   }
 
+  @Post(`/posts/:id/facebook-reply`)
+  async replyFacebookComment(
+    @Param('id') id: string,
+    @Body() body: { message: string; replyToCommentId?: string }
+  ) {
+    try {
+      const accessTokenRes = await this.getIntegrationToken(id, 'facebook');
+      if (!accessTokenRes || !(accessTokenRes as any).success || !(accessTokenRes as any).token) {
+        return { success: false, error: 'No Facebook access token' };
+      }
+      const accessToken = (accessTokenRes as any).token;
+
+      const posts = await this._postsService.getPostsRecursively(id, true);
+      if (!posts || posts.length === 0) {
+        return { success: false, error: 'Post not found' };
+      }
+
+      const post = posts[0];
+      if (!post.releaseURL || !post.releaseURL.includes('facebook.com')) {
+        return { success: false, error: 'Not a Facebook post' };
+      }
+
+      const releaseUrl = post.releaseURL;
+      let pageId: string | null = null;
+      let postId: string | null = null;
+
+      const match1 = releaseUrl.match(/facebook\.com\/(\d+)\/posts\/(\d+)/);
+      if (match1) {
+        pageId = match1[1];
+        postId = match1[2];
+      }
+
+      if (!postId) {
+        return { success: false, error: 'Could not extract Facebook post ID' };
+      }
+
+      const fbProvider = this._integrationManager.getSocialIntegration('facebook');
+      
+      const result = await fbProvider.comment(
+        id,
+        postId,
+        body.replyToCommentId || undefined,
+        accessToken,
+        [{ id: postId, message: body.message, settings: {} }],
+        post.integration as any
+      );
+
+      if (result && result.length > 0 && result[0].status === 'success') {
+        return { success: true, commentId: result[0].postId, releaseURL: result[0].releaseURL };
+      }
+
+      return { success: false, error: 'Failed to reply comment' };
+    } catch (err) {
+      console.error('[PublicController] Error replying Facebook comment:', err);
+      return { success: false, error: String(err) };
+    }
+  }
+
+  @Get(`/posts/:id/facebook-replies`)
+  async getFacebookReplies(
+    @Param('id') id: string,
+    @Query('commentId') commentId: string,
+    @Query('accessToken') accessToken: string
+  ) {
+    try {
+      if (!commentId) {
+        return { success: false, replies: [], error: 'Comment ID required' };
+      }
+
+      const fbProvider = this._integrationManager.getSocialIntegration('facebook');
+      const replies = await fbProvider.getReplies(commentId, accessToken);
+
+      return { success: true, replies };
+    } catch (err) {
+      console.error('[PublicController] Error fetching Facebook replies:', err);
+      return { success: false, replies: [], error: String(err) };
+    }
+  }
+
   @Get('/posts/:id/integration-token')
   async getIntegrationToken(
     @Param('id') id: string,

@@ -103,6 +103,11 @@ export interface ISocialMediaIntegration {
     accessToken: string,
     pageId?: string
   ): Promise<SocialComment[]>; // Get comments from a post
+
+  getReplies?(
+    commentId: string,
+    accessToken: string
+  ): Promise<SocialComment[]>; // Get replies for a comment
 }
 
 export type PostResponse = {
@@ -143,6 +148,7 @@ export type SocialComment = {
   };
   createdAt: string;
   permalinkUrl?: string;
+  repliesCount?: number;
 };
 
 export type FetchPageInformationResult = {

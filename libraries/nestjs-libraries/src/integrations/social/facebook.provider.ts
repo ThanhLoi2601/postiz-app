@@ -709,9 +709,44 @@ async getComments(postId: string, accessToken: string, pageId?: string): Promise
         },
         createdAt: comment.created_time,
         permalinkUrl: comment.permalink_url || undefined,
+        repliesCount: data.summary?.total_count || 0,
       }));
     } catch (err) {
       console.error('[FacebookProvider] Error fetching Facebook comments:', err);
+      return [];
+    }
+  }
+
+  async getReplies(commentId: string, accessToken: string): Promise<SocialComment[]> {
+    try {
+      console.log('[FacebookProvider] Fetching replies for comment ID:', commentId);
+      
+      const response = await this.fetch(
+        `https://graph.facebook.com/v21.0/${commentId}/comments?fields=id,message,from,created_time,permalink_url&order=chronological&limit=50&access_token=${accessToken}`,
+        {},
+        'get facebook replies'
+      );
+
+      const data = await response.json();
+      console.log('[FacebookProvider] Replies Response:', JSON.stringify(data));
+      
+      if (!data?.data) {
+        return [];
+      }
+
+      return data.data.map((reply: any) => ({
+        id: reply.id,
+        content: reply.message || '',
+        author: {
+          id: reply.from?.id || '',
+          name: reply.from?.name || 'Unknown',
+          picture: reply.from?.picture?.data?.url || undefined,
+        },
+        createdAt: reply.created_time,
+        permalinkUrl: reply.permalink_url || undefined,
+      }));
+    } catch (err) {
+      console.error('[FacebookProvider] Error fetching Facebook replies:', err);
       return [];
     }
   }
