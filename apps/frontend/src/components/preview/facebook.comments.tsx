@@ -22,6 +22,8 @@ interface ReplyData {
   };
   createdAt: string;
   permalinkUrl?: string;
+  repliesCount?: number;
+  replies?: ReplyData[];
 }
 
 const formatTime = (date: string) => {
@@ -212,6 +214,64 @@ export const FacebookCommentsTab: FC<{
     }
   }, [accessToken, postId, fetch, reset, mutate]);
 
+  const ReplyItem = ({
+    reply,
+    level = 0,
+  }: {
+    reply: ReplyData;
+    level?: number;
+  }) => {
+    const [expanded, setExpanded] = useState(false);
+
+    return (
+      <div className={`flex gap-3 ${level > 0 ? 'mt-3' : ''}`}>
+        <Avatar src={reply.author?.picture} name={reply.author?.name || 'User'} />
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-white">
+              {reply.author?.name || 'Unknown'}
+            </span>
+            <span className="text-xs text-gray-500">
+              {formatTime(reply.createdAt)}
+            </span>
+          </div>
+
+          <p className="text-sm text-gray-300 mt-1 break-words">
+            {reply.content}
+          </p>
+
+          <div className="flex items-center gap-3 mt-2">
+            <button
+              onClick={() => handleReply(reply.id, reply.author?.name || 'User')}
+              className="text-xs text-gray-500 hover:text-white"
+            >
+              {t('reply', 'Reply')}
+            </button>
+
+            <button
+              onClick={() => toggleReplies(reply.id)}
+              className="text-xs text-blue-400"
+            >
+              {expandedReplies[reply.id]
+                ? 'Hide replies'
+                : `View replies`}
+            </button>
+          </div>
+
+          {expandedReplies[reply.id] && repliesData[reply.id] && (
+            <div className="mt-3 pl-4 border-l-2 border-gray-700">
+              {repliesData[reply.id].map((reply_: ReplyData) => (
+                <ReplyItem key={reply_.id} reply={reply_} level={level + 1}/>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+
   const openInFacebook = useCallback((url: string) => {
     window.open(url, '_blank', 'noopener,noreferrer');
   }, []);
@@ -269,7 +329,7 @@ export const FacebookCommentsTab: FC<{
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-white">{comment.author?.name || 'Unknown'}</span>
                     <span className="text-xs text-gray-500">{formatTime(comment.createdAt)}</span>
-</div>
+                  </div>
                   <p className="text-sm text-gray-300 mt-1 break-words">{comment.content}</p>
                   <div className="flex items-center gap-3 mt-2">
                     <button onClick={() => handleReply(comment.id, comment.author?.name || 'User')} className="flex items-center gap-1 text-xs text-gray-500 hover:text-white transition-colors">
@@ -286,36 +346,25 @@ export const FacebookCommentsTab: FC<{
                     )}
                   </div>
                   
-                  {comment.repliesCount > 0 && (
-                    <div className="mt-3">
-                      <button 
-                        onClick={() => toggleReplies(comment.id)}
-                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                      >
-                        {loadingReplies[comment.id] ? 'Loading...' : expandedReplies[comment.id] ? 'Hide replies' : `View replies (${comment.repliesCount})`}
-                      </button>
-                      
-                      {expandedReplies[comment.id] && repliesData[comment.id] && (
-                        <div className="mt-3 space-y-3 pl-4 border-l-2 border-gray-700">
-                          {repliesData[comment.id].map((reply: ReplyData) => (
-                            <div key={reply.id} className="flex gap-3">
-                              <Avatar src={reply.author?.picture} name={reply.author?.name || 'User'} />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-semibold text-white">{reply.author?.name || 'Unknown'}</span>
-                                  <span className="text-xs text-gray-500">{formatTime(reply.createdAt)}</span>
-                                </div>
-                                <p className="text-sm text-gray-300 mt-1 break-words">{reply.content}</p>
-                                <button onClick={() => handleReply(reply.id, reply.author?.name || 'User')} className="flex items-center gap-1 mt-2 text-xs text-gray-500 hover:text-white transition-colors">
-                                  {t('reply', 'Reply')}
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
+
+                  <div className="mt-3">
+                    <button
+                      onClick={() => toggleReplies(comment.id)}
+                      className="text-xs text-blue-400"
+                    >
+                      {expandedReplies[comment.id]
+                        ? 'Hide replies'
+                        : `View replies`}
+                    </button>
+
+                    {expandedReplies[comment.id] && repliesData[comment.id] && (
+                      <div className="mt-3 pl-4 border-l-2 border-gray-700">
+                        {repliesData[comment.id].map((reply: ReplyData) => (
+                          <ReplyItem key={reply.id} reply={reply} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -323,34 +372,38 @@ export const FacebookCommentsTab: FC<{
         </div>
       )}
       {replyTo && (
-        <div className="flex items-center justify-between bg-third px-3 py-2 rounded-md border border-tableBorder mt-4">
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-gray-400">Replying to</span>
-            <span className="text-white font-medium">@{replyTo.name}</span>
-        <form onSubmit={handleSubmit(onReplySubmit)} className="space-y-3 pt-4 border-t border-tableBorder">
+        <form
+          onSubmit={handleSubmit(onReplySubmit)}
+          className="space-y-3 pt-4 border-t border-tableBorder"
+        >
           <div className="flex items-center justify-between bg-third px-3 py-2 rounded-md border border-tableBorder">
             <div className="flex items-center gap-2 text-sm">
               <span className="text-gray-400">Replying to</span>
               <span className="text-white font-medium">@{replyTo.name}</span>
             </div>
-            <button type="button" onClick={cancelReply} className="text-gray-500 hover:text-white transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
+            <button
+              type="button"
+              onClick={cancelReply}
+              className="text-gray-500 hover:text-white transition-colors"
+            >
+              ?
             </button>
           </div>
-          <button onClick={cancelReply} className="text-gray-500 hover:text-white transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+
           <textarea
             ref={replyTextareaRef}
             {...register('replyMessage', { required: true })}
             className="flex w-full px-3 py-2 text-sm text-white bg-third border border-tableBorder placeholder-gray-500 rounded-md min-h-[80px] resize-none focus:ring-0 outline-none"
             placeholder={t('write_reply', 'Write a reply...')}
           />
+
           <div className="flex justify-between items-center">
-            {submitError && <span className="text-red-400 text-sm">{submitError}</span>}
-            {submitSuccess && <span className="text-green-400 text-sm">Reply posted!</span>}
+            {submitError && (
+              <span className="text-red-400 text-sm">{submitError}</span>
+            )}
+            {submitSuccess && (
+              <span className="text-green-400 text-sm">Reply posted!</span>
+            )}
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting ? t('posting', 'Posting...') : t('post_reply', 'Reply')}
             </Button>
