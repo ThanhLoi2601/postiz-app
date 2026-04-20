@@ -170,7 +170,7 @@ export default async function Auth(
             ))}
           </div>
         </div>
-        <div className="w-full lg:w-96 lg:flex-shrink-0">
+        <div className="w-full lg:w-1/2 lg:flex-shrink-0">
           <div className="p-4 pt-0">
             <CommentsTabs postId={id} />
           </div>
