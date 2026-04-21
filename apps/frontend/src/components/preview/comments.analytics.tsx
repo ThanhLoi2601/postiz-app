@@ -1,5 +1,6 @@
 'use client';
 
+import { Button } from '@gitroom/react/form/button';
 import { FC, useState, useCallback } from 'react';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import useSWR from 'swr';
@@ -226,7 +227,7 @@ export const CommentsAnalytics: FC<{
                 : 'bg-tableBorder text-gray-400 hover:text-white'
             }`}
           >
-            {t('neutral', 'neutral')} ({neutralComments?.length || 0})
+            {t('neutral', 'Neutral')} ({neutralComments?.length || 0})
           </button>
           <button
             onClick={() => setSentimentFilter('all')}
