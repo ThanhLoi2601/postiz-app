@@ -6,6 +6,7 @@ import useSWR from 'swr';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import { useUser } from '@gitroom/frontend/components/layout/user.context';
 
 dayjs.extend(relativeTime);
 
@@ -18,6 +19,21 @@ export const CommentsAnalytics: FC<{
     useState<SentimentFilter>('all');
   const fetch = useFetch();
   const t = useT();
+  const user = useUser();
+
+  const goToComments = useCallback(() => {
+    window.location.href = `/auth?returnUrl=${window.location.href}`;
+  }, []);
+  if (!user?.id) {
+    return (
+      <Button onClick={goToComments}>
+        {t(
+          'login_register_to_add_comments',
+          'Login / Register to add comments'
+        )}
+      </Button>
+    );
+  }
 
   const getAnalytics = useCallback(async () => {
     return (await fetch(`/public/posts/${postId}/comments-analytics`)).json();
@@ -201,6 +217,16 @@ export const CommentsAnalytics: FC<{
             }`}
           >
             {t('negative', 'Negative')} ({negativeComments?.length || 0})
+          </button>
+          <button
+            onClick={() => setSentimentFilter('neutral')}
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              sentimentFilter === 'neutral'
+                ? 'bg-gray-600 text-white'
+                : 'bg-tableBorder text-gray-400 hover:text-white'
+            }`}
+          >
+            {t('neutral', 'neutral')} ({neutralComments?.length || 0})
           </button>
           <button
             onClick={() => setSentimentFilter('all')}

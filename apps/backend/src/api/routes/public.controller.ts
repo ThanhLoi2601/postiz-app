@@ -288,17 +288,19 @@ export class PublicController {
 
         // Fetch replies if available
         if (provider.getReplies) {
-          try {
-            const replies = await provider.getReplies(comment.id, accessToken);
-            
-            if (replies && replies.length > 0) {
+
+          const fetchRepliesRecursively = async (parentId: string, depth: number = 0) => {
+            if (depth > 10) return; // Safety cap to avoid infinite loops
+            try {
+              const replies = await provider.getReplies!(parentId, accessToken);
+              if (!replies || replies.length === 0) return;
+ 
               totalRepliesCount += replies.length;
-              
-              // Add each reply
+ 
               for (const reply of replies) {
-                const replyData = {
+                allCommentsWithReplies.push({
                   sourceCommentId: reply.id,
-                  parentCommentId: comment.id, // Link to parent
+                  parentCommentId: parentId,
                   content: reply.content || '',
                   authorName: reply.author?.name || 'Unknown',
                   authorId: reply.author?.id || '',
@@ -306,15 +308,18 @@ export class PublicController {
                   likeCount: 0,
                   createdAt: reply.createdAt,
                   permalinkUrl: reply.permalinkUrl || null,
-                  isReply: true, // Mark as reply
-                };
-                allCommentsWithReplies.push(replyData);
+                  isReply: true,
+                });
+ 
+                // Recurse into this reply's replies
+                await fetchRepliesRecursively(reply.id, depth + 1);
               }
+            } catch (err) {
+              console.error('[Analytics] Error fetching replies for', parentId, err);
             }
-          } catch (err) {
-            console.error('[Analytics] Error fetching replies for comment', comment.id, err);
-            // Continue with other comments even if one fails
-          }
+          };
+ 
+          await fetchRepliesRecursively(comment.id);
         }
       }
 
