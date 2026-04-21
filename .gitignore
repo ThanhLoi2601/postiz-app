@@ -5,6 +5,7 @@ dist
 tmp
 /out-tsc
 .env
+docker-compose.dev_custom.yaml
 # dependencies
 node_modules
 
