@@ -44,6 +44,8 @@ import { FarcasterProvider } from '@gitroom/backend/services/auth/providers/farc
 import { WalletProvider } from '@gitroom/backend/services/auth/providers/wallet.provider';
 import { OauthProvider } from '@gitroom/backend/services/auth/providers/oauth.provider';
 
+import { CommentSentimentService } from '@gitroom/backend/services/comment-sentiment.service';
+
 const authenticatedController = [
   UsersController,
   AnalyticsController,
@@ -96,6 +98,7 @@ const authenticatedController = [
     FarcasterProvider,
     WalletProvider,
     OauthProvider,
+    CommentSentimentService
   ],
   get exports() {
     return [...this.imports, ...this.providers];

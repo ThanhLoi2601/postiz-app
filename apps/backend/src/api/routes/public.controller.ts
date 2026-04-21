@@ -33,6 +33,7 @@ import { PrismaService } from '@gitroom/nestjs-libraries/database/prisma/prisma.
 import { socialIntegrationList } from '@gitroom/nestjs-libraries/integrations/integration.manager';
 import OpenAI from 'openai';
 import { z } from 'zod';
+import { CommentSentimentService } from '@gitroom/backend/services/comment-sentiment.service';
 
 const pump = promisify(pipeline);
 
@@ -72,6 +73,8 @@ export class PublicController {
     private _integrationService: IntegrationService,
     private _integrationManager: IntegrationManager,
     private _prismaService: PrismaService,
+    private _commentSentimentService: CommentSentimentService,
+
   ) {}
   @Post('/agent')
   async createAgent(@Body() body: { text: string; apiKey: string }) {
@@ -329,7 +332,7 @@ export class PublicController {
       // ===== STEP 4: Prepare data for AI sentiment analysis =====
       // Include BOTH comments and replies (up to 100 total for analysis)
       const commentsForAnalysis = allCommentsWithReplies
-        .slice(0, 100) // Increase limit to include more replies
+        .slice(0, 100)
         .map((c: any, idx: number) => ({
           commentId: c.sourceCommentId || `comment_${idx}`,
           author: c.authorName || 'Unknown',
@@ -338,50 +341,71 @@ export class PublicController {
           isReply: c.isReply || false,
         }));
 
-      const analysisPrompt = `You are a sentiment analysis expert for social media comments.
-  Understand both English and Vietnamese.
-  Classify each comment (including replies) by overall meaning, tone, and intent (not just keywords):
-  - POSITIVE: positive feelings (praise, satisfaction, support, gratitude)
-  - NEGATIVE: negative feelings (complaint, criticism, anger, disappointment)
-  - NEUTRAL: no clear sentiment (questions, info, suggestions, mixed/unclear)
-  Handle slang, abbreviations, and mixed Vietnamese-English naturally.
-  Also extract up to 3 meaningful keywords/hashtags (original language, no stopwords).
-  Return a JSON array (no other text):
-  ${JSON.stringify(
-    commentsForAnalysis.map((c: any) => ({
-      commentId: c.commentId,
-      author: c.author,
-      content: c.content.substring(0, 200),
-      likes: c.likes,
-      isReply: c.isReply,
-    })),
-  )}`;
+      // ===== CACHING START =====
+      const { cached, toAnalyze } =
+        await this._commentSentimentService.prepareForAnalysis(
+          fbPostId,
+          commentsForAnalysis,
+        );
 
-      let sentimentResults: any[] = [];
-      try {
-        const analysisResult = await openai.chat.completions.create({
-          model: 'gpt-4o',
-          messages: [
-            {
-              role: 'system',
-              content: analysisPrompt,
-            },
-          ],
-          temperature: 0,
-          max_tokens: 6000, // Increased for more comments
-        });
+      console.log(
+        `[Analytics] Cache hit: ${cached.length}, To analyze: ${toAnalyze.length}`,
+      );
 
-        const content = analysisResult.choices[0]?.message?.content || '[]';
-        const parsed = content
-          .replace(/```json/g, '')
-          .replace(/```/g, '')
-          .trim();
-        sentimentResults = JSON.parse(parsed);
-      } catch (aiError) {
-        console.error('[Analytics] OpenAI error:', aiError);
-        sentimentResults = [];
+      let newSentimentResults: any[] = [];
+
+      if (toAnalyze.length > 0) {
+        const analysisPrompt = `You are a sentiment analysis expert for social media comments.
+Understand both English and Vietnamese.
+Classify each comment by overall meaning, tone, and intent:
+- POSITIVE: praise, satisfaction, support
+- NEGATIVE: complaint, anger, criticism
+- NEUTRAL: no clear sentiment
+Handle slang & mixed Vietnamese-English.
+Extract up to 3 keywords.
+Return JSON only:
+${JSON.stringify(
+  toAnalyze.map((c: any) => ({
+    commentId: c.commentId,
+    author: c.author,
+    content: c.content.substring(0, 200),
+    likes: c.likes,
+    isReply: c.isReply,
+  })),
+)}`;
+
+        try {
+          const analysisResult = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [{ role: 'system', content: analysisPrompt }],
+            temperature: 0,
+            max_tokens: 6000,
+          });
+
+          const content = analysisResult.choices[0]?.message?.content || '[]';
+          const parsed = content
+            .replace(/```json/g, '')
+            .replace(/```/g, '')
+            .trim();
+
+          newSentimentResults = JSON.parse(parsed);
+
+          // Save cache
+          await this._commentSentimentService.saveSentiments(
+            fbPostId,
+            newSentimentResults,
+          );
+
+          console.log(
+            `[Analytics] Saved ${newSentimentResults.length} new sentiments`,
+          );
+        } catch (err) {
+          console.error('[Analytics] OpenAI error:', err);
+        }
       }
 
+      // Merge cached + new
+      const sentimentResults = [...cached, ...newSentimentResults];
       // ===== STEP 5: Build sentiment map =====
       const sentimentMap = new Map();
       for (const r of sentimentResults) {

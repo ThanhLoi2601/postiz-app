@@ -957,3 +957,33 @@ model Announcement {
   color       AnnouncementColor @default(INFO)
   createdAt   DateTime          @default(now())
 }
+
+model CommentSentiment {
+  id                String   @id @default(cuid())
+  
+  // Unique identifier for the comment
+  commentId         String   @unique // Facebook comment ID
+  
+  // Comment metadata
+  postId            String   // Facebook post ID
+  content           String   @db.Text // Comment content
+  contentHash       String   // MD5 hash of content (for quick comparison)
+  
+  // Author info
+  authorId          String?
+  authorName        String?
+  
+  // Sentiment analysis results
+  sentiment         String   // POSITIVE, NEGATIVE, NEUTRAL
+  keywords          Json     // Array of keywords
+  confidence        Float?   // Confidence score from AI
+  
+  // Metadata
+  analyzedAt        DateTime @default(now())
+  lastUsedAt        DateTime @default(now())
+  
+  @@index([postId])
+  @@index([commentId])
+  @@index([contentHash])
+  @@map("comment_sentiments")
+}
