@@ -29,8 +29,36 @@ import { Readable, pipeline } from 'stream';
 import { promisify } from 'util';
 import { OnlyURL } from '@gitroom/nestjs-libraries/dtos/webhooks/webhooks.dto';
 import { isSafePublicHttpsUrl } from '@gitroom/nestjs-libraries/dtos/webhooks/webhook.url.validator';
+import { PrismaService } from '@gitroom/nestjs-libraries/database/prisma/prisma.service';
+import { socialIntegrationList } from '@gitroom/nestjs-libraries/integrations/integration.manager';
+import OpenAI from 'openai';
+import { z } from 'zod';
 
 const pump = promisify(pipeline);
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+interface SocialCommentData {
+  sourceCommentId?: string;
+  parentCommentId?: string | null;
+  content: string;
+  authorId?: string;
+  authorName?: string;
+  authorPicture?: string | null;
+  likeCount?: number;
+  createdAt?: string;
+}
+
+const SentimentResult = z.object({
+  commentId: z.string(),
+  author: z.string(),
+  content: z.string(),
+  sentiment: z.enum(['POSITIVE', 'NEGATIVE', 'NEUTRAL']),
+  keywords: z.array(z.string()),
+  likes: z.number(),
+});
 
 @ApiTags('Public')
 @Controller('/public')
@@ -42,7 +70,8 @@ export class PublicController {
     private _nowpayments: Nowpayments,
     private _subscriptionService: SubscriptionService,
     private _integrationService: IntegrationService,
-    private _integrationManager: IntegrationManager
+    private _integrationManager: IntegrationManager,
+    private _prismaService: PrismaService,
   ) {}
   @Post('/agent')
   async createAgent(@Body() body: { text: string; apiKey: string }) {
@@ -59,22 +88,20 @@ export class PublicController {
   @Get(`/posts/:id`)
   async getPreview(@Param('id') id: string) {
     const posts = await this._postsService.getPostsRecursively(id, true);
-    return posts.map(
-      ({ childrenPost, ...p }) => ({
-        ...p,
-        ...(p.integration
-          ? {
-              integration: {
-                id: p.integration.id,
-                name: p.integration.name,
-                picture: p.integration.picture,
-                providerIdentifier: p.integration.providerIdentifier,
-                profile: p.integration.profile,
-              },
-            }
-          : {}),
-      })
-    );
+    return posts.map(({ childrenPost, ...p }) => ({
+      ...p,
+      ...(p.integration
+        ? {
+            integration: {
+              id: p.integration.id,
+              name: p.integration.name,
+              picture: p.integration.picture,
+              providerIdentifier: p.integration.providerIdentifier,
+              profile: p.integration.profile,
+            },
+          }
+        : {}),
+    }));
   }
 
   @Get(`/posts/:id/comments`)
@@ -85,7 +112,7 @@ export class PublicController {
   @Get(`/posts/:id/facebook-comments`)
   async getFacebookComments(
     @Param('id') id: string,
-    @Query('accessToken') accessToken: string
+    @Query('accessToken') accessToken: string,
   ) {
     try {
       const posts = await this._postsService.getPostsRecursively(id, true);
@@ -104,14 +131,14 @@ export class PublicController {
       // Extract Facebook Page ID and Post ID - handle multiple URL formats
       let pageId: string | null = null;
       let postId: string | null = null;
-      
+
       // Pattern 1: /PAGE_ID/posts/POST_ID (numeric page ID)
       const match1 = releaseUrl.match(/facebook\.com\/(\d+)\/posts\/(\d+)/);
       if (match1) {
         pageId = match1[1];
         postId = match1[2];
       }
-      
+
       // Pattern 2: /username/posts/POST_ID (username format)
       if (!pageId || !postId) {
         const match2 = releaseUrl.match(/facebook\.com\/([^/]+)\/posts\/(\d+)/);
@@ -123,51 +150,333 @@ export class PublicController {
           }
         }
       }
-      
+
       // Pattern 3: /groups/GROUP_ID/posts/POST_ID
       if (!pageId || !postId) {
-        const match3 = releaseUrl.match(/facebook\.com\/groups\/[^/]+\/posts\/(\d+)/);
+        const match3 = releaseUrl.match(
+          /facebook\.com\/groups\/[^/]+\/posts\/(\d+)/,
+        );
         if (match3) postId = match3[1];
       }
-      
+
       // Pattern 4: ?story_fbid=POST_ID
       if (!postId) {
         const match4 = releaseUrl.match(/story_fbid=(\d+)/);
         if (match4) postId = match4[1];
       }
-      
+
       // Pattern 5: ?fbid=POST_ID (photo, video, etc)
       if (!postId) {
         const match5 = releaseUrl.match(/[?&]fbid=(\d+)/);
         if (match5) postId = match5[1];
       }
 
-      console.log('[PublicController] Extracted - Page ID:', pageId, 'Post ID:', postId);
+      console.log(
+        '[PublicController] Extracted - Page ID:',
+        pageId,
+        'Post ID:',
+        postId,
+      );
 
       if (!postId) {
-        return { success: false, comments: [], error: 'Could not extract Facebook post ID' };
+        return {
+          success: false,
+          comments: [],
+          error: 'Could not extract Facebook post ID',
+        };
       }
 
       // For Facebook Page posts, we need to use PAGE_ID_POST_ID format
       // But we need to check if pageId is available and valid
-      const fbProvider = this._integrationManager.getSocialIntegration('facebook');
-      const comments = await fbProvider.getComments(postId, accessToken, pageId || undefined);
+      const fbProvider =
+        this._integrationManager.getSocialIntegration('facebook');
+      const comments = await fbProvider.getComments(
+        postId,
+        accessToken,
+        pageId || undefined,
+      );
 
       return { success: true, comments };
     } catch (err) {
-      console.error('[PublicController] Error fetching Facebook comments:', err);
+      console.error(
+        '[PublicController] Error fetching Facebook comments:',
+        err,
+      );
       return { success: false, comments: [], error: String(err) };
     }
   }
 
+  @Get(`/posts/:id/comments-analytics`)
+  async getCommentsAnalytics(@Param('id') id: string) {
+    try {
+      const posts = await this._postsService.getPostsRecursively(id, true);
+      if (!posts || posts.length === 0) {
+        return { success: false, error: 'Post not found' };
+      }
+
+      const post = posts[0];
+      if (!post.integration) {
+        return { success: false, error: 'No integration found' };
+      }
+
+      const provider = socialIntegrationList.find(
+        (p) => p.identifier === post.integration.providerIdentifier,
+      );
+
+      if (!provider || !provider.getComments) {
+        return { success: false, error: 'Provider does not support comments' };
+      }
+
+      const accessTokenRes = await this.getIntegrationToken(
+        id,
+        post.integration.providerIdentifier,
+      );
+      if (!(accessTokenRes as any).success || !(accessTokenRes as any).token) {
+        return { success: false, error: 'No access token' };
+      }
+      const accessToken = (accessTokenRes as any).token;
+
+      let fbPostId = post.releaseId;
+      if (!fbPostId && post.releaseURL) {
+        const match = post.releaseURL.match(/facebook\.com\/\d+\/posts\/(\d+)/);
+        if (match) fbPostId = match[1];
+      }
+
+      if (!fbPostId) {
+        return { success: false, error: 'Could not extract post ID' };
+      }
+
+      // ===== STEP 1: Fetch main comments =====
+      const mainComments = (await provider.getComments(
+        fbPostId,
+        accessToken,
+      )) as any[];
+
+      if (!mainComments || mainComments.length === 0) {
+        return {
+          success: true,
+          summary: { totalComments: 0, totalReplies: 0 },
+          sentiment: { positive: 0, negative: 0, neutral: 0 },
+          topUsers: [],
+          keywords: [],
+          positiveComments: [],
+          negativeComments: [],
+          neutralComments: [],
+        };
+      }
+
+      // ===== STEP 2: Fetch replies for each comment =====
+      console.log('[Analytics] Fetching replies for', mainComments.length, 'comments');
+      
+      const allCommentsWithReplies: any[] = [];
+      let totalRepliesCount = 0;
+
+      for (const comment of mainComments) {
+        // Add main comment first
+        const mainCommentData = {
+          sourceCommentId: comment.id,
+          content: comment.content || comment.message || '',
+          authorName: comment.author?.name || comment.from?.name || 'Unknown',
+          authorId: comment.author?.id || comment.from?.id || '',
+          authorPicture: comment.author?.picture || comment.from?.picture?.data?.url || null,
+          likeCount: comment.likeCount || comment.like_count || 0,
+          createdAt: comment.createdAt || comment.created_time,
+          permalinkUrl: comment.permalinkUrl || null,
+          isReply: false, // Mark as main comment
+        };
+        allCommentsWithReplies.push(mainCommentData);
+
+        // Fetch replies if available
+        if (provider.getReplies) {
+          try {
+            const replies = await provider.getReplies(comment.id, accessToken);
+            
+            if (replies && replies.length > 0) {
+              totalRepliesCount += replies.length;
+              
+              // Add each reply
+              for (const reply of replies) {
+                const replyData = {
+                  sourceCommentId: reply.id,
+                  parentCommentId: comment.id, // Link to parent
+                  content: reply.content || '',
+                  authorName: reply.author?.name || 'Unknown',
+                  authorId: reply.author?.id || '',
+                  authorPicture: reply.author?.picture || null,
+                  likeCount: 0,
+                  createdAt: reply.createdAt,
+                  permalinkUrl: reply.permalinkUrl || null,
+                  isReply: true, // Mark as reply
+                };
+                allCommentsWithReplies.push(replyData);
+              }
+            }
+          } catch (err) {
+            console.error('[Analytics] Error fetching replies for comment', comment.id, err);
+            // Continue with other comments even if one fails
+          }
+        }
+      }
+
+      console.log('[Analytics] Total comments + replies:', allCommentsWithReplies.length);
+      console.log('[Analytics] Main comments:', mainComments.length, 'Replies:', totalRepliesCount);
+
+      // ===== STEP 4: Prepare data for AI sentiment analysis =====
+      // Include BOTH comments and replies (up to 100 total for analysis)
+      const commentsForAnalysis = allCommentsWithReplies
+        .slice(0, 100) // Increase limit to include more replies
+        .map((c: any, idx: number) => ({
+          commentId: c.sourceCommentId || `comment_${idx}`,
+          author: c.authorName || 'Unknown',
+          content: c.content || '',
+          likes: c.likeCount || 0,
+          isReply: c.isReply || false,
+        }));
+
+      const analysisPrompt = `You are a sentiment analysis expert for social media comments.
+  Understand both English and Vietnamese.
+  Classify each comment (including replies) by overall meaning, tone, and intent (not just keywords):
+  - POSITIVE: positive feelings (praise, satisfaction, support, gratitude)
+  - NEGATIVE: negative feelings (complaint, criticism, anger, disappointment)
+  - NEUTRAL: no clear sentiment (questions, info, suggestions, mixed/unclear)
+  Handle slang, abbreviations, and mixed Vietnamese-English naturally.
+  Also extract up to 3 meaningful keywords/hashtags (original language, no stopwords).
+  Return a JSON array (no other text):
+  ${JSON.stringify(
+    commentsForAnalysis.map((c: any) => ({
+      commentId: c.commentId,
+      author: c.author,
+      content: c.content.substring(0, 200),
+      likes: c.likes,
+      isReply: c.isReply,
+    })),
+  )}`;
+
+      let sentimentResults: any[] = [];
+      try {
+        const analysisResult = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            {
+              role: 'system',
+              content: analysisPrompt,
+            },
+          ],
+          temperature: 0,
+          max_tokens: 6000, // Increased for more comments
+        });
+
+        const content = analysisResult.choices[0]?.message?.content || '[]';
+        const parsed = content
+          .replace(/```json/g, '')
+          .replace(/```/g, '')
+          .trim();
+        sentimentResults = JSON.parse(parsed);
+      } catch (aiError) {
+        console.error('[Analytics] OpenAI error:', aiError);
+        sentimentResults = [];
+      }
+
+      // ===== STEP 5: Build sentiment map =====
+      const sentimentMap = new Map();
+      for (const r of sentimentResults) {
+        sentimentMap.set(r.commentId, r);
+      }
+
+      // ===== STEP 6: Count sentiments and categorize (include BOTH comments + replies) =====
+      let positive = 0,
+        negative = 0,
+        neutral = 0;
+      const positiveList: any[] = [],
+        negativeList: any[] = [],
+        neutralList: any[] = [];
+      const userComments: Record<string, number> = {};
+      const allKeywords: string[] = [];
+
+      for (const comment of allCommentsWithReplies) {
+        const result = sentimentMap.get(comment.sourceCommentId) || {
+          sentiment: 'NEUTRAL',
+          keywords: [],
+        };
+        const sentiment = result.sentiment || 'NEUTRAL';
+
+        if (sentiment === 'POSITIVE') {
+          positive++;
+          if (positiveList.length < 20) positiveList.push(comment);
+        } else if (sentiment === 'NEGATIVE') {
+          negative++;
+          if (negativeList.length < 20) negativeList.push(comment);
+        } else {
+          neutral++;
+          if (neutralList.length < 20) neutralList.push(comment);
+        }
+
+        // Count by user (for Top Contributors)
+        const authorName = comment.authorName || 'Unknown';
+        userComments[authorName] = (userComments[authorName] || 0) + 1;
+
+        // Collect keywords (normalize to lowercase for dedup)
+        if (result.keywords) {
+          for (const kw of result.keywords) {
+            const normalized = kw.trim().toLowerCase();
+            if (normalized) allKeywords.push(normalized);
+          }
+        }
+      }
+
+      // ===== STEP 7: Build Top Contributors list =====
+      const topUsers = Object.entries(userComments)
+        .sort((a: any, b: any) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([user, count]) => ({ user, count }));
+
+      // ===== STEP 8: Calculate percentages based on total (comments + replies) =====
+      const total = allCommentsWithReplies.length || 1;
+      
+      // Dedup keywords: count occurrences, sort by count desc, take top 20
+      const keywordCountMap: Record<string, number> = {};
+      for (const kw of allKeywords) {
+        keywordCountMap[kw] = (keywordCountMap[kw] || 0) + 1;
+      }
+      const keywords = Object.entries(keywordCountMap)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([word, count]) => ({ word, count }));
+
+      return {
+        success: true,
+        summary: {
+          totalComments: mainComments.length,  // Only main comments
+          totalReplies: totalRepliesCount,     // Actual reply count
+        },
+        sentiment: {
+          positive: Math.round((positive / total) * 100),
+          negative: Math.round((negative / total) * 100),
+          neutral: Math.round((neutral / total) * 100),
+        },
+        topUsers,
+        keywords,
+        positiveComments: positiveList.slice(0, 20),
+        negativeComments: negativeList.slice(0, 20),
+        neutralComments: neutralList.slice(0, 20),
+      };
+    } catch (err) {
+      console.error('[PublicController] Error analytics:', err);
+      return { success: false, error: String(err) };
+    }
+  }
   @Post(`/posts/:id/facebook-reply`)
   async replyFacebookComment(
     @Param('id') id: string,
-    @Body() body: { message: string; replyToCommentId?: string }
+    @Body() body: { message: string; replyToCommentId?: string },
   ) {
     try {
       const accessTokenRes = await this.getIntegrationToken(id, 'facebook');
-      if (!accessTokenRes || !(accessTokenRes as any).success || !(accessTokenRes as any).token) {
+      if (
+        !accessTokenRes ||
+        !(accessTokenRes as any).success ||
+        !(accessTokenRes as any).token
+      ) {
         return { success: false, error: 'No Facebook access token' };
       }
       const accessToken = (accessTokenRes as any).token;
@@ -196,19 +505,24 @@ export class PublicController {
         return { success: false, error: 'Could not extract Facebook post ID' };
       }
 
-      const fbProvider = this._integrationManager.getSocialIntegration('facebook');
-      
+      const fbProvider =
+        this._integrationManager.getSocialIntegration('facebook');
+
       const result = await fbProvider.comment(
         id,
         postId,
         body.replyToCommentId || undefined,
         accessToken,
         [{ id: postId, message: body.message, settings: {} }],
-        post.integration as any
+        post.integration as any,
       );
 
       if (result && result.length > 0 && result[0].status === 'success') {
-        return { success: true, commentId: result[0].postId, releaseURL: result[0].releaseURL };
+        return {
+          success: true,
+          commentId: result[0].postId,
+          releaseURL: result[0].releaseURL,
+        };
       }
 
       return { success: false, error: 'Failed to reply comment' };
@@ -222,14 +536,15 @@ export class PublicController {
   async getFacebookReplies(
     @Param('id') id: string,
     @Query('commentId') commentId: string,
-    @Query('accessToken') accessToken: string
+    @Query('accessToken') accessToken: string,
   ) {
     try {
       if (!commentId) {
         return { success: false, replies: [], error: 'Comment ID required' };
       }
 
-      const fbProvider = this._integrationManager.getSocialIntegration('facebook');
+      const fbProvider =
+        this._integrationManager.getSocialIntegration('facebook');
       const replies = await fbProvider.getReplies(commentId, accessToken);
 
       return { success: true, replies };
@@ -242,7 +557,7 @@ export class PublicController {
   @Get('/posts/:id/integration-token')
   async getIntegrationToken(
     @Param('id') id: string,
-    @Query('provider') provider: string
+    @Query('provider') provider: string,
   ) {
     try {
       const posts = await this._postsService.getPostsRecursively(id, true);
@@ -257,7 +572,7 @@ export class PublicController {
 
       const integration = await this._integrationService.getIntegrationById(
         post.organizationId,
-        post.integrationId
+        post.integrationId,
       );
 
       if (!integration || integration.providerIdentifier !== provider) {
@@ -278,7 +593,7 @@ export class PublicController {
     @RealIP() ip: string,
     @UserAgent() userAgent: string,
     @Body()
-    body: { fbclid?: string; tt: TrackEnum; additional: Record<string, any> }
+    body: { fbclid?: string; tt: TrackEnum; additional: Record<string, any> },
   ) {
     const uniqueId = req?.cookies?.track || makeId(10);
     const fbclid = req?.cookies?.fbclid || body.fbclid;
@@ -288,7 +603,7 @@ export class PublicController {
       userAgent,
       body.tt,
       body.additional,
-      fbclid
+      fbclid,
     );
     if (!req.cookies.track) {
       res.cookie('track', uniqueId, {
@@ -340,7 +655,7 @@ export class PublicController {
       await this._subscriptionService.modifySubscriptionByOrg(
         load.orgId,
         totalChannels,
-        load.billing
+        load.billing,
       );
 
       return { success: true };
@@ -359,7 +674,7 @@ export class PublicController {
   async streamFile(
     @Query() query: OnlyURL,
     @Res() res: Response,
-    @Req() req: Request
+    @Req() req: Request,
   ) {
     const { url } = query;
     if (!url.endsWith('mp4')) {
