@@ -22,9 +22,9 @@ export class CommentSentimentService {
   /**
    * Generate hash từ content để detect identical comments
    */
-  private generateContentHash(content: string): string {
+  private generateContentHash(content?: string): string {
     return createHash('md5')
-      .update(content.toLowerCase().trim())
+      .update((content || '').toLowerCase().trim())
       .digest('hex');
   }
 

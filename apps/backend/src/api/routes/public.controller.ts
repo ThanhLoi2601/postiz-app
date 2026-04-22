@@ -209,6 +209,60 @@ export class PublicController {
     }
   }
 
+  async sendToTelegram(messages: string[]) {
+    const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+    for (const text of messages) {
+      try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: CHAT_ID,
+            text,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+          }),
+        });
+      } catch (err) {
+        console.error('[Telegram] Send error:', err);
+      }
+    }
+  }
+
+  private buildNegativeMessages(
+    sentimentResults: any[],
+    allCommentsWithReplies: any[],
+  ): string[] {
+    const messages: string[] = [];
+
+    for (const r of sentimentResults) {
+      if (r.sentiment !== 'NEGATIVE') continue;
+
+      const original = allCommentsWithReplies.find(
+        (c) => c.sourceCommentId === r.commentId,
+      );
+
+      if (!original) continue;
+
+      const content = original.content?.slice(0, 200) || '';
+      const author = original.authorName || 'Unknown';
+      const link = original.permalinkUrl || 'No link';
+
+      const msg = `
+  <b>⚠️ Negative Comment</b>
+  👤 <b>${author}</b>
+  💬 ${content}
+  🔗 <a href="${link}">View comment</a>
+  `;
+
+      messages.push(msg);
+    }
+
+    return messages;
+  }
+  
   @Get(`/posts/:id/comments-analytics`)
   async getCommentsAnalytics(@Param('id') id: string) {
     try {
@@ -403,7 +457,7 @@ ${JSON.stringify(
           console.error('[Analytics] OpenAI error:', err);
         }
       }
-
+      this.buildNegativeMessages(newSentimentResults,allCommentsWithReplies)
       // Merge cached + new
       const sentimentResults = [...cached, ...newSentimentResults];
       // ===== STEP 5: Build sentiment map =====
