@@ -98,11 +98,17 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
       activateExitButton: state.activateExitButton,
     }))
   );
+  const [facebookGroupPostFilled, setFacebookGroupPostFilled] = useState(false);
 
   useEffect(() => {
     if (hide) {
       setHide(false);
     }
+    const handler = (e: Event) => {
+      setFacebookGroupPostFilled((e as CustomEvent).detail.isFilled);
+    };
+    window.addEventListener('facebook-group-post-filled', handler);
+    return () => window.removeEventListener('facebook-group-post-filled', handler);
   }, [hide]);
 
   const currentIntegrationText = useMemo(() => {
@@ -199,7 +205,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
   }, [existingData, mutate, modal]);
 
   const schedule = useCallback(
-    (type: 'draft' | 'now' | 'schedule' | 'update') => async () => {
+    (type: 'save' | 'draft' | 'now' | 'schedule' | 'update') => async () => {
       if (
         (type === 'now' || type === 'schedule') &&
         (existingData?.posts?.[0]?.state === 'PUBLISHED' ||
@@ -275,7 +281,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
         return;
       }
 
-      if (type !== 'draft') {
+      if (type !== 'draft' && type !== 'save') {
         for (const item of checkAllValid) {
           if (item.valid === false) {
             toaster.show(
@@ -614,7 +620,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                   disabled={
                     selectedIntegrations.length === 0 || loading || locked
                   }
-                  onClick={schedule('schedule')}
+                  onClick={facebookGroupPostFilled ? schedule('save') : schedule('schedule')}
                   className="text-white relative min-w-[180px] btnSub disabled:cursor-not-allowed disabled:opacity-80 outline-none gap-[8px] flex justify-center items-center h-[44px] rounded-[8px] bg-[#612BD3] ps-[20px] pe-[16px]"
                 >
                   {loading && (
@@ -633,7 +639,9 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                       : dummy
                       ? t('create_output', 'Create output')
                       : !existingData?.integration
-                      ? t('add_to_calendar', 'Add to calendar')
+                      ? facebookGroupPostFilled
+                      ? t('save', 'Save')
+                      : t('add_to_calendar', 'Add to calendar')
                       : existingData?.posts?.[0]?.state === 'DRAFT'
                       ? t('schedule', 'Schedule')
                       : t('update', 'Update')}
