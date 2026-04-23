@@ -292,6 +292,7 @@ Content: ${content}
         return { success: false, error: 'No access token' };
       }
       const accessToken = (accessTokenRes as any).token;
+      console.log("Access Token: ", accessToken)
 
       let fbPostId = post.releaseId;
       if (!fbPostId && post.releaseURL) {
