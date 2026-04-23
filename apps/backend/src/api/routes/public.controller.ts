@@ -251,10 +251,10 @@ export class PublicController {
       const link = original.permalinkUrl || 'No link';
 
       const msg = `
-  <b>⚠️ Negative Comment</b>
-  👤 <b>${author}</b>
-  💬 ${content}
-  🔗 <a href="${link}">View comment</a>
+<b>Negative Comment</b>
+Author: <b>${author}</b>
+Content: ${content}
+<a href="${link}">View comment</a>
   `;
 
       messages.push(msg);
@@ -457,7 +457,22 @@ ${JSON.stringify(
           console.error('[Analytics] OpenAI error:', err);
         }
       }
-      this.buildNegativeMessages(newSentimentResults,allCommentsWithReplies)
+      const negativeMessages = this.buildNegativeMessages(newSentimentResults,allCommentsWithReplies)
+      console.log('[Analytics] Found', negativeMessages.length, 'negative comments')
+      if (negativeMessages.length > 0) {
+        console.log('[Analytics] Sending', negativeMessages.length, 'messages to Telegram...');
+        console.log('[Analytics] BOT_TOKEN exists:', !!process.env.TELEGRAM_BOT_TOKEN);
+        console.log('[Analytics] CHAT_ID exists:', !!process.env.TELEGRAM_CHAT_ID);
+        
+        try {
+          await this.sendToTelegram(negativeMessages);
+          console.log('[Analytics] Telegram messages sent successfully');
+        } catch (err) {
+          console.error('[Analytics] Error sending to Telegram:', err);
+        }
+      } else {
+        console.log('[Analytics] No negative comments to send');
+      }
       // Merge cached + new
       const sentimentResults = [...cached, ...newSentimentResults];
       // ===== STEP 5: Build sentiment map =====
