@@ -478,7 +478,7 @@ export class PostsRepository {
   }
 
   async createOrUpdatePost(
-    state: 'save' |'draft' | 'schedule' | 'now' | 'update',
+    state: 'draft' | 'schedule' | 'now' | 'update',
     orgId: string,
     date: string,
     body: PostBody,
@@ -494,7 +494,7 @@ export class PostsRepository {
         integration: {
           connect: {
             id: body.integration.id,
-            organizationId: body.type === 'save' ? (body.settings as any).groupId : orgId,
+            organizationId: orgId,
           },
         },
         ...(posts?.[posts.length - 1]?.id
@@ -521,7 +521,7 @@ export class PostsRepository {
           ? {}
           : {
               state:
-                ['draft', 'save'].includes(body.type) ? ('DRAFT' as const) : ('QUEUE' as const),
+                body.type === 'draft' ? ('DRAFT' as const) : ('QUEUE' as const),
             }),
         image: JSON.stringify(value.image),
         settings: JSON.stringify(body.settings),

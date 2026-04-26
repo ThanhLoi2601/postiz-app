@@ -747,7 +747,7 @@ export class PostsService {
       const { posts } = await this._postRepository.createOrUpdatePost(
         body.type,
         orgId,
-        ['now', 'save'].includes(body.type) ? dayjs().format('YYYY-MM-DDTHH:mm:00') : body.date,
+        body.type === 'now' ? dayjs().format('YYYY-MM-DDTHH:mm:00') : body.date,
         post,
         body.tags,
         body.inter

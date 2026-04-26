@@ -412,6 +412,15 @@ export const WeekView = () => {
     </div>
   );
 };
+
+const getSettings = (post: any) => {
+  try {
+    return post?.settings ? JSON.parse(post.settings) : {};
+  } catch {
+    return {};
+  }
+};
+
 export const MonthView = () => {
   const { startDate } = useCalendar();
   const t = useT();
@@ -1144,7 +1153,7 @@ const CalendarItem: FC<{
         </div>
         <div className="w-full flex-1 flex flex-col min-h-[40px]">
           <div className="text-start">
-            {state === 'DRAFT' ? t('draft', 'Draft') + ': ' : ''}
+            {state === 'DRAFT' || !getSettings(post)?.isPostedOnGroup ? t('draft', 'Draft') + ': ' : ''}
           </div>
             <div className="w-full relative">
               <div className="absolute top-0 start-0 w-full text-ellipsis break-words line-clamp-1 text-start">
@@ -1152,6 +1161,7 @@ const CalendarItem: FC<{
                   t('no_content', 'no content')}
               </div>
             </div>
+            
         </div>
         {showTime && (
           <div className="text-textColor/50 text-[12px] whitespace-nowrap flex items-center">

@@ -12,7 +12,7 @@ const { getPublishedPostsWithFacebook, syncPostComments } =
   });
 
 const BATCH_SIZE = 5;
-const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const SYNC_INTERVAL_MS = 30 * 60 * 1000;
 
 export async function syncCommentsWorkflow() {
   console.log('[SyncCommentsWorkflow] Starting workflow');

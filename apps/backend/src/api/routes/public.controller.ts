@@ -117,6 +117,9 @@ export class PublicController {
     @Param('id') id: string,
     @Query('accessToken') accessToken: string,
   ) {
+    // Extract Facebook Page ID and Post ID - handle multiple URL formats
+    let pageId: string | null = null;
+    let postId: string | null = null;
     try {
       const posts = await this._postsService.getPostsRecursively(id, true);
       if (!posts || posts.length === 0) {
@@ -125,21 +128,38 @@ export class PublicController {
 
       const post = posts[0];
       if (!post.releaseURL || !post.releaseURL.includes('facebook.com')) {
-        return { success: false, comments: [], error: 'Not a Facebook post' };
+          try {
+            const settingsObj = post?.settings ? JSON.parse(post.settings) : null;
+            
+            const groupId = settingsObj?.groupId;
+            const postIdT = settingsObj?.postId;
+            
+            if (groupId && postId) {
+              console.log('Group ID:', groupId);
+              console.log('Post ID:', postId);
+              postId = postIdT
+              pageId = groupId
+            } else {
+              console.log('Missing groupId or postId');
+            }
+          } catch (error) {
+            console.error('JSON parse error:', error);
+          }
+          if (!pageId || !postId) {        
+            return { success: false, comments: [], error: 'Not a Facebook post' };
+          }
       }
 
       const releaseUrl = post.releaseURL;
       console.log('[PublicController] Facebook post URL:', releaseUrl);
 
-      // Extract Facebook Page ID and Post ID - handle multiple URL formats
-      let pageId: string | null = null;
-      let postId: string | null = null;
-
       // Pattern 1: /PAGE_ID/posts/POST_ID (numeric page ID)
-      const match1 = releaseUrl.match(/facebook\.com\/(\d+)\/posts\/(\d+)/);
-      if (match1) {
-        pageId = match1[1];
-        postId = match1[2];
+      if (!pageId || !postId) {
+        const match1 = releaseUrl.match(/facebook\.com\/(\d+)\/posts\/(\d+)/);
+        if (match1) {
+          pageId = match1[1];
+          postId = match1[2];
+        }
       }
 
       // Pattern 2: /username/posts/POST_ID (username format)
@@ -187,6 +207,24 @@ export class PublicController {
           comments: [],
           error: 'Could not extract Facebook post ID',
         };
+      }
+
+      try {
+        const settingsObj = post?.settings ? JSON.parse(post.settings) : null;
+        
+        const groupId = settingsObj?.groupId;
+        const postIdT = settingsObj?.postId;
+        
+        if (groupId && postId) {
+          console.log('Group ID:', groupId);
+          console.log('Post ID:', postId);
+          postId = postIdT
+          pageId = groupId
+        } else {
+          console.log('Missing groupId or postId');
+        }
+      } catch (error) {
+        console.error('JSON parse error:', error);
       }
 
       // For Facebook Page posts, we need to use PAGE_ID_POST_ID format
@@ -275,6 +313,7 @@ Content: ${content}
       if (!post.integration) {
         return { success: false, error: 'No integration found' };
       }
+      console.log(JSON.stringify(post, null, 2))
 
       const provider = socialIntegrationList.find(
         (p) => p.identifier === post.integration.providerIdentifier,
@@ -295,9 +334,28 @@ Content: ${content}
       console.log("Access Token: ", accessToken)
 
       let fbPostId = post.releaseId;
+      let fbGroupId = null
       if (!fbPostId && post.releaseURL) {
         const match = post.releaseURL.match(/facebook\.com\/\d+\/posts\/(\d+)/);
         if (match) fbPostId = match[1];
+      }
+
+      try {
+        const settingsObj = post?.settings ? JSON.parse(post.settings) : null;
+        
+        const groupId = settingsObj?.groupId;
+        const postId = settingsObj?.postId;
+        
+        if (groupId && postId) {
+          console.log('Group ID:', groupId);
+          console.log('Post ID:', postId);
+          fbPostId = postId
+          fbGroupId = groupId
+        } else {
+          console.log('Missing groupId or postId');
+        }
+      } catch (error) {
+        console.error('JSON parse error:', error);
       }
 
       if (!fbPostId) {
@@ -308,6 +366,7 @@ Content: ${content}
       const mainComments = (await provider.getComments(
         fbPostId,
         accessToken,
+        fbGroupId
       )) as any[];
 
       if (!mainComments || mainComments.length === 0) {

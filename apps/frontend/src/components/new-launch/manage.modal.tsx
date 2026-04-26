@@ -205,7 +205,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
   }, [existingData, mutate, modal]);
 
   const schedule = useCallback(
-    (type: 'save' | 'draft' | 'now' | 'schedule' | 'update') => async () => {
+    (type: 'draft' | 'now' | 'schedule' | 'update') => async () => {
       if (
         (type === 'now' || type === 'schedule') &&
         (existingData?.posts?.[0]?.state === 'PUBLISHED' ||
@@ -281,7 +281,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
         return;
       }
 
-      if (type !== 'draft' && type !== 'save') {
+      if (type !== 'draft') {
         for (const item of checkAllValid) {
           if (item.valid === false) {
             toaster.show(
@@ -620,7 +620,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                   disabled={
                     selectedIntegrations.length === 0 || loading || locked
                   }
-                  onClick={facebookGroupPostFilled ? schedule('save') : schedule('schedule')}
+                  onClick={facebookGroupPostFilled ? schedule('draft') : schedule('schedule')}
                   className="text-white relative min-w-[180px] btnSub disabled:cursor-not-allowed disabled:opacity-80 outline-none gap-[8px] flex justify-center items-center h-[44px] rounded-[8px] bg-[#612BD3] ps-[20px] pe-[16px]"
                 >
                   {loading && (
